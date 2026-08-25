@@ -33,7 +33,7 @@ jobs:
       - name: Install dependencies
         run: |
           brew update
-          brew install ldid dpkg xz
+          brew install ldid dpkg xz cmark
 
       - name: Install Theos
         run: |
