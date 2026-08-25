@@ -1,40 +1,66 @@
-name: CI
+name: Build NewTerm iOS 16+
 
 on:
-  push:
-    paths-ignore:
-      - '.gitignore'
-      - '**/.md'
-      - 'assets/**'
-  pull_request:
-    paths-ignore:
-      - '.gitignore'
-      - '**/*.md'
-      - 'assets/**'
   workflow_dispatch:
 
+  push:
+    branches:
+      - main
+      - ios16
+
+  pull_request:
+
+permissions:
+  contents: read
+
 jobs:
-  build:
-    name: Build
-    runs-on: macos-12
+  build-rootless:
+    name: Build Rootless DEB
+    runs-on: macos-15
+
     steps:
-    - name: Checkout
-      uses: actions/checkout@v3
-    - name: Set up Procursus
-      uses: beerpiss/procursus-action@v2
-      with:
-        packages: ldid xz-utils cmark make
-        cache: true
-        cache-path: ~/__cache
-    - name: Set up Theos
-      run: git clone --recursive --depth=1 'https://github.com/theos/theos.git' ~/theos
-    - name: Compile
-      id: package_build
-      run: |
-        gmake package THEOS=~/theos
-        echo "package=$(cat .theos/last_package)" >> $GITHUB_OUTPUT
-    - name: Upload a Build Artifact
-      uses: actions/upload-artifact@v3
-      with:
-        name: NewTerm3
-        path: '${{ steps.package_build.outputs.package }}'
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - name: Show environment
+        run: |
+          sw_vers
+          xcodebuild -version
+          uname -m
+
+      - name: Install dependencies
+        run: |
+          brew update
+          brew install ldid dpkg xz
+
+      - name: Install Theos
+        run: |
+          git clone --recursive https://github.com/theos/theos.git "$HOME/theos"
+          echo "THEOS=$HOME/theos" >> "$GITHUB_ENV"
+
+      - name: Resolve Swift packages
+        run: |
+          xcodebuild \
+            -resolvePackageDependencies \
+            -project NewTerm.xcodeproj \
+            -scheme "NewTerm (iOS)"
+
+      - name: Build rootless package
+        run: |
+          make clean
+          make package \
+            ROOTLESS=1 \
+            FINALPACKAGE=1
+
+      - name: Show resulting packages
+        run: |
+          find packages -type f -maxdepth 2 -print || true
+
+      - name: Upload DEB
+        uses: actions/upload-artifact@v4
+        with:
+          name: NewTerm-iOS16-rootless
+          path: packages/*.deb
+          if-no-files-found: error

@@ -56,14 +56,9 @@ class SubProcess {
 
 	private static let loginHelper: String = Bundle.main.path(forAuxiliaryExecutable: "NewTermLoginHelper")!
 
-	private static let loginIsShell: Bool = {
-		#if targetEnvironment(simulator)
-		true
-		#else
-		// TODO: Temporary workaround for XinaA15
-		(try? URL(fileURLWithPath: "/var/Liy/xina").checkResourceIsReachable()) == true
-		#endif
-	}()
+	private static func executableExists(_ path: String) -> Bool {
+		FileManager.default.isExecutableFile(atPath: path)
+	}
 
 	private static let login: String = {
 		#if targetEnvironment(simulator)
@@ -71,23 +66,46 @@ class SubProcess {
 		#elseif targetEnvironment(macCatalyst)
 		return "/usr/bin/login"
 		#else
-		// TODO: Temporary workaround for XinaA15
-		if loginIsShell {
-			return "/var/jb/bin/zsh"
+		let loginCandidates = [
+			"/var/jb/usr/bin/login",
+			"/usr/bin/login"
+		]
+
+		if let login = loginCandidates.first(where: executableExists) {
+			return login
 		}
-		return ["/var/jb/usr/bin/login", "/usr/bin/login"]
-			.first { (try? URL(fileURLWithPath: $0).checkResourceIsReachable()) == true } ?? "/usr/bin/login"
+
+		let shellCandidates = [
+			"/var/jb/bin/zsh",
+			"/bin/zsh",
+			"/var/jb/bin/bash",
+			"/bin/bash"
+		]
+
+		return shellCandidates.first(where: executableExists) ?? "/bin/sh"
 		#endif
 	}()
+
+	private static var loginIsShell: Bool {
+		#if targetEnvironment(simulator)
+		return true
+		#else
+		let name = URL(fileURLWithPath: login).lastPathComponent
+		return name == "zsh" || name == "bash" || name == "sh"
+		#endif
+	}
 
 	private static var loginArgv: [String] {
 		#if targetEnvironment(simulator)
 		return ["zsh", "--login", "-i"]
 		#else
-		// TODO: Temporary workaround for XinaA15
-		if loginIsShell {
-			return ["zsh", "--login", "-i"]
-		}
+    if loginIsShell {
+        return [
+            URL(fileURLWithPath: login).lastPathComponent,
+            "--login",
+            "-i"
+        ]
+    }
 
 		// Interestingly, despite what login(1) seems to imply, it still seems we need to manually
 		// handle passing the -q (force hush login) flag. iTerm2 does this, so I guess it’s fine?
@@ -104,31 +122,57 @@ class SubProcess {
 		"LC_TERMINAL=NewTerm"
 	]
 
-	private static var userPasswd: passwd? {
-		let length = sysconf(_SC_GETPW_R_SIZE_MAX)
-		let buffer = malloc(length)
-		defer { buffer?.deallocate() }
+	private static let userAccount: (shell: String, home: String) = {
+		let requestedLength = sysconf(_SC_GETPW_R_SIZE_MAX)
+		let length = requestedLength > 0 ? requestedLength : 16384
+
+		guard let buffer = malloc(Int(length)) else {
+			return (
+				shell: "/bin/bash",
+				home: NSHomeDirectory()
+			)
+		}
+
+		defer {
+			free(buffer)
+		}
 
 		var pwd = passwd()
-		var result: UnsafeMutablePointer<passwd>? = UnsafeMutablePointer<passwd>.allocate(capacity: 1)
-		guard ie_getpwuid_r(getuid(), &pwd, buffer, length, &result) == 0 else {
-			return nil
+		var result: UnsafeMutablePointer<passwd>?
+
+		guard ie_getpwuid_r(
+			getuid(),
+			&pwd,
+			buffer,
+			length,
+			&result
+		) == 0, result != nil else {
+			return (
+				shell: "/bin/bash",
+				home: NSHomeDirectory()
+			)
 		}
-		return pwd
-	}
+
+		let shell = pwd.pw_shell != nil
+			? String(cString: pwd.pw_shell)
+			: "/bin/bash"
+
+		let home = pwd.pw_dir != nil
+			? String(cString: pwd.pw_dir)
+			: NSHomeDirectory()
+
+		return (
+			shell: shell,
+			home: home
+		)
+	}()
 
 	private static var shell: String {
-		if let result = userPasswd?.pw_shell {
-			return String(cString: result)
-		}
-		return "/bin/bash"
+		userAccount.shell
 	}
 
 	private static var homeDirectory: String {
-		if let result = userPasswd?.pw_dir {
-			return String(cString: result)
-		}
-		return NSHomeDirectory()
+		userAccount.home
 	}
 
 	weak var delegate: SubProcessDelegate?
@@ -315,9 +359,16 @@ class SubProcess {
 			if let languageCode = locale.languageCode,
 				 let regionCode = locale.regionCode {
 				let identifier = "\(languageCode)_\(regionCode).UTF-8"
-				let url = URL(fileURLWithPath: "/usr/share/locale")/identifier
-				if (try? url.checkResourceIsReachable()) == true {
-					return identifier
+				let localeRoots = [
+					"/var/jb/usr/share/locale",
+					"/usr/share/locale"
+				]
+
+				for root in localeRoots {
+					let url = URL(fileURLWithPath: root)/identifier
+					if (try? url.checkResourceIsReachable()) == true {
+						return identifier
+					}
 				}
 			}
 		}

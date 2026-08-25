@@ -1,11 +1,17 @@
-export TARGET = iphone:latest:14.0
+export TARGET = iphone:latest:16.0
 export ARCHS = arm64
 
 ifeq ($(ROOTLESS),1)
-	export DEB_ARCH = iphoneos-arm64
-	export INSTALL_PREFIX = /var/jb
+
+export THEOS_PACKAGE_SCHEME = rootless
+export DEB_ARCH = iphoneos-arm64
+export INSTALL_PREFIX = /var/jb
+
 else
-	export DEB_ARCH = iphoneos-arm
+
+export DEB_ARCH = iphoneos-arm
+export INSTALL_PREFIX = 
+
 endif
 
 INSTALL_TARGET_PROCESSES = NewTerm
